@@ -10,6 +10,7 @@ HWND g_wnd, g_taskbar, g_tip, g_notify, g_rebar;
 UINT g_clickMsg;
 bool g_light, g_hover;
 bool g_background;  // opaque rounded plate behind the text, for transparent / restyled taskbars
+bool g_vertical;    // vertical taskbar: stack device readings as rows
 std::vector<WidgetItem> g_items;
 std::wstring g_tipText;
 RECT g_lastTray{}, g_lastBar{}, g_lastWidgets{};
@@ -251,10 +252,108 @@ std::vector<Piece> Layout(int& width) {
 }
 
 void Paint() {
-    if (!g_wnd) return;
-    RECT bar;
+    if (!g_wnd || !g_taskbar) return;
+    RECT bar{};
     GetClientRect(g_taskbar, &bar);
-    int H = bar.bottom - bar.top;
+    const int barW = bar.right - bar.left;
+    const int barH = bar.bottom - bar.top;
+    if (barW <= 0 || barH <= 0) return;
+
+    // Vertical taskbars are narrow: stack each device on its own row and keep
+    // glyphs and percentage text upright instead of rotating individual characters.
+    if (g_vertical) {
+        Rgb fg = g_light ? Rgb{ 0, 0, 0 } : Rgb{ 255, 255, 255 };
+        Rgb red = g_light ? Rgb{ 196, 30, 40 } : Rgb{ 255, 90, 90 };
+        Rgb charge = g_light ? Rgb{ 0, 120, 212 } : Rgb{ 96, 205, 255 };
+        HFONT icons = MakeFont(Px(16), FW_NORMAL, L"Segoe Fluent Icons", L"Segoe MDL2 Assets");
+        HFONT bolt = MakeFont(Px(10), FW_NORMAL, L"Segoe Fluent Icons", L"Segoe MDL2 Assets");
+        HFONT text = MakeFont(Px(11), FW_NORMAL, L"Segoe UI Variable Text", L"Segoe UI");
+
+        struct VerticalItem {
+            Mask icon, value, charging;
+            Rgb iconColor, valueColor, chargingColor;
+            int alpha;
+        };
+        std::vector<VerticalItem> rows;
+        const int iconValueGap = Px(5);  // match the icon-to-text spacing used by the horizontal layout
+        int height = Px(6) * 2;
+        if (g_items.empty()) {
+            rows.push_back({ RenderMask(std::wstring(1, kBatteryUnknown), icons, g_light), {}, {},
+                             fg, fg, charge, 110 });
+            height += rows.back().icon.h + Px(4);
+        } else {
+            for (const auto& it : g_items) {
+                const int alpha = it.dim ? 120 : 255;
+                const std::wstring value = !it.text.empty() ? it.text
+                    : it.percent >= 0 ? std::to_wstring(it.percent) + L"%" : L"?";
+                VerticalItem row{
+                    RenderMask(std::wstring(1, Glyph(it.kind, it.bluetooth)), icons, g_light),
+                    RenderMask(value, text, g_light),
+                    it.charging ? RenderMask(std::wstring(1, kBolt), bolt, g_light) : Mask{},
+                    fg, it.low ? red : fg, charge, alpha
+                };
+                height += row.icon.h + iconValueGap + std::max(row.value.h, row.charging.h) + Px(7);
+                rows.push_back(std::move(row));
+            }
+        }
+        DeleteObject(icons);
+        DeleteObject(bolt);
+        DeleteObject(text);
+
+        const int W = barW;
+        const int H = std::max(1, height);
+        Canvas cv(W, H);
+        for (auto& p : cv.px) p = 0x01000000;
+        auto roundRect = [&](int inset, int radius, Rgb color, int alpha) {
+            for (int y = inset; y < H - inset; y++)
+                for (int x = 0; x < W; x++) {
+                    int dx = x < radius ? radius - x : (x >= W - radius ? x - (W - radius - 1) : 0);
+                    int dy = y < inset + radius ? inset + radius - y
+                        : (y >= H - inset - radius ? y - (H - inset - radius - 1) : 0);
+                    if (dx * dx + dy * dy <= radius * radius) cv.Blend(x, y, color, alpha);
+                }
+        };
+        if (g_background) roundRect(Px(4), Px(6), g_light ? Rgb{ 243, 243, 243 } : Rgb{ 32, 32, 32 }, 240);
+        if (g_hover) roundRect(Px(4), Px(4), g_light ? Rgb{ 0, 0, 0 } : Rgb{ 255, 255, 255 }, g_light ? 20 : 26);
+
+        int y = Px(6);
+        for (const auto& row : rows) {
+            cv.Draw(row.icon, (W - row.icon.w) / 2, y, row.iconColor, row.alpha);
+            y += row.icon.h + iconValueGap;
+            const int lineH = std::max(row.value.h, row.charging.h);
+            const int lineW = row.value.w + (row.charging.w ? Px(2) + row.charging.w : 0);
+            const int x = (W - lineW) / 2;
+            cv.Draw(row.value, x, y + (lineH - row.value.h) / 2, row.valueColor, row.alpha);
+            if (row.charging.w)
+                cv.Draw(row.charging, x + row.value.w + Px(2), y + (lineH - row.charging.h) / 2,
+                        row.chargingColor, row.alpha);
+            y += lineH + Px(7);
+        }
+
+        HDC screen = GetDC(nullptr);
+        HDC mem = CreateCompatibleDC(screen);
+        BITMAPINFO bi{};
+        bi.bmiHeader = { sizeof(BITMAPINFOHEADER), W, -H, 1, 32, BI_RGB };
+        void* bits = nullptr;
+        HBITMAP bmp = CreateDIBSection(mem, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+        if (bmp && bits) {
+            memcpy(bits, cv.px.data(), (size_t)W * H * 4);
+            HGDIOBJ old = SelectObject(mem, bmp);
+            g_size = { W, H };
+            SIZE size{ W, H };
+            POINT src{ 0, 0 };
+            BLENDFUNCTION blend{ AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
+            UpdateLayeredWindow(g_wnd, screen, nullptr, &size, mem, &src, 0, &blend, ULW_ALPHA);
+            SelectObject(mem, old);
+            DeleteObject(bmp);
+        }
+        DeleteDC(mem);
+        ReleaseDC(nullptr, screen);
+        g_lastW = -1;
+        return;
+    }
+
+    const int H = barH;
     int W = 0;
     auto pieces = Layout(W);
     if (W <= 0 || H <= 0) return;
@@ -336,9 +435,9 @@ bool Create(HINSTANCE inst, HWND notifyWnd, UINT clickMsg, bool lightTheme) {
     Destroy();
     g_taskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
     if (!g_taskbar || !FindWindowExW(g_taskbar, nullptr, L"TrayNotifyWnd", nullptr)) { g_taskbar = nullptr; return false; }
-    RECT tb;
-    GetWindowRect(g_taskbar, &tb);
-    if (tb.bottom - tb.top > tb.right - tb.left) { g_taskbar = nullptr; return false; }  // vertical taskbar: use tray icons
+    RECT tb{};
+    GetClientRect(g_taskbar, &tb);
+    g_vertical = (tb.bottom - tb.top > tb.right - tb.left);
     // Windows 11's taskbar is a XAML island; on Windows 10 the task buttons live in ReBarWindow32
     // and have to be narrowed so they never slide under the widget.
     g_rebar = FindWindowExW(g_taskbar, nullptr, L"Windows.UI.Composition.DesktopWindowContentBridge", nullptr)
@@ -429,11 +528,57 @@ void SetBackground(bool on) {
 bool Reposition() {
     if (!Alive()) return false;
     if (Dpi() != g_lastDpi) { g_lastDpi = Dpi(); Paint(); }
+
+    RECT client{}, bar{};
+    GetClientRect(g_taskbar, &client);
+    GetWindowRect(g_taskbar, &bar);
+    const bool vertical = (client.bottom - client.top > client.right - client.left);
+    if (vertical != g_vertical) {
+        g_vertical = vertical;
+        Paint();
+    }
+
     HWND tray = FindWindowExW(g_taskbar, nullptr, L"TrayNotifyWnd", nullptr);
     if (!tray) return true;
-    RECT tr, bar;
+    RECT tr{};
     GetWindowRect(tray, &tr);
-    GetWindowRect(g_taskbar, &bar);
+
+    // On a vertical taskbar, place the stacked widget immediately above the notification area.
+    if (g_vertical) {
+        POINT anchor{ bar.left, tr.top };
+        ScreenToClient(g_taskbar, &anchor);
+        int top = anchor.y - g_size.cy - Px(2);
+        DWORD customOffset = 0, sz = sizeof(customOffset);
+        if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\WirelessBattery", L"TaskbarOffset",
+                         RRF_RT_REG_DWORD, nullptr, &customOffset, &sz) == ERROR_SUCCESS)
+            top -= Px((int)customOffset);
+
+        const int maxTop = (int)std::max<LONG>(0, client.bottom - client.top - g_size.cy);
+        top = std::clamp(top, 0, maxTop);
+        const int left = (int)std::max<LONG>(0, (client.right - client.left - g_size.cx) / 2);
+
+        // On Windows 10, shorten the vertical ReBar area when it would extend behind the widget.
+        if (g_rebar && IsWindow(g_rebar)) {
+            RECT rr{};
+            GetWindowRect(g_rebar, &rr);
+            POINT tl{ rr.left, rr.top };
+            ScreenToClient(g_taskbar, &tl);
+            const int rebarHeight = rr.bottom - rr.top;
+            if (tl.y < top && tl.y + rebarHeight > top)
+                MoveWindow(g_rebar, tl.x, tl.y, rr.right - rr.left, (int)std::max<LONG>(0, top - tl.y), TRUE);
+        }
+
+        bool covered = GetWindow(g_wnd, GW_HWNDPREV) != nullptr;
+        if (!covered && EqualRect(&tr, &g_lastTray) && EqualRect(&bar, &g_lastBar) &&
+            g_lastW == g_size.cy && g_lastLeft == top)
+            return true;
+        g_lastTray = tr;
+        g_lastBar = bar;
+        g_lastW = g_size.cy;
+        g_lastLeft = top;
+        SetWindowPos(g_wnd, HWND_TOP, left, top, g_size.cx, g_size.cy, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        return true;
+    }
     // Right-to-left Windows (Hebrew, Arabic) mirrors the taskbar: client x runs from the screen's right
     // edge, so a window's client-space left edge is its screen-space right edge.
     bool rtl = GetWindowLongW(g_taskbar, GWL_EXSTYLE) & WS_EX_LAYOUTRTL;
