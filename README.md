@@ -23,7 +23,7 @@ Battery levels of your wireless mouse, headset, keyboard and controller, right o
 - **Theme:** it follows light/dark mode and DPI scaling.
 - **Transparent taskbar themes** (e.g. Windhawk's Taskbar Styler): turn on *Background behind taskbar text* in the menu to keep the text readable over the wallpaper.
 
-**Tray icons:** one icon per device with the number drawn in it, plus a "Low battery" notification at 15%. The app switches to this automatically when the taskbar widget cannot be created or the taskbar cannot be found. Vertical taskbars are supported by stacking device readings in a compact column.
+**Tray icons:** one icon per device with the number drawn in it, plus a "Low battery" notification at 15%. The app switches to this automatically when the taskbar widget cannot be created or the taskbar cannot be found. Vertical taskbars docked on either the left or right edge are supported by stacking device readings in a compact column near the notification area.
 
 Hover for details. Click for the menu: every device (click one to hide or show it), display mode, *Refresh now*, *Start with Windows*, and *Exit*. Levels refresh every 60 seconds, and right away when a device is plugged in or the PC wakes up.
 
