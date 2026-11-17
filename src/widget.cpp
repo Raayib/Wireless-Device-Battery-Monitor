@@ -270,6 +270,7 @@ void Paint() {
             int alpha;
         };
         std::vector<VerticalItem> rows;
+        const int iconValueGap = Px(5);  // match the icon-to-text spacing used by the horizontal layout
         int height = Px(6) * 2;
         if (g_items.empty()) {
             rows.push_back({ RenderMask(std::wstring(1, kBatteryUnknown), icons), {}, {}, fg, fg, charge, 110 });
@@ -285,7 +286,7 @@ void Paint() {
                     it.charging ? RenderMask(std::wstring(1, kBolt), bolt) : Mask{},
                     fg, it.low ? red : fg, charge, alpha
                 };
-                height += row.icon.h + Px(2) + std::max(row.value.h, row.charging.h) + Px(7);
+                height += row.icon.h + iconValueGap + std::max(row.value.h, row.charging.h) + Px(7);
                 rows.push_back(std::move(row));
             }
         }
@@ -312,7 +313,7 @@ void Paint() {
         int y = Px(6);
         for (const auto& row : rows) {
             cv.Draw(row.icon, (W - row.icon.w) / 2, y, row.iconColor, row.alpha);
-            y += row.icon.h + Px(2);
+            y += row.icon.h + iconValueGap;
             const int lineH = std::max(row.value.h, row.charging.h);
             const int lineW = row.value.w + (row.charging.w ? Px(2) + row.charging.w : 0);
             const int x = (W - lineW) / 2;
