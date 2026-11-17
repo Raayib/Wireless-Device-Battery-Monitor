@@ -546,9 +546,9 @@ bool Reposition() {
                          RRF_RT_REG_DWORD, nullptr, &customOffset, &sz) == ERROR_SUCCESS)
             top -= Px((int)customOffset);
 
-        const int maxTop = std::max(0, client.bottom - client.top - g_size.cy);
+        const int maxTop = (int)std::max<LONG>(0, client.bottom - client.top - g_size.cy);
         top = std::clamp(top, 0, maxTop);
-        const int left = std::max(0, (client.right - client.left - g_size.cx) / 2);
+        const int left = (int)std::max<LONG>(0, (client.right - client.left - g_size.cx) / 2);
 
         // On Windows 10, shorten the vertical ReBar area when it would extend
         // behind the widget. Destroy() sends WM_SIZE to Explorer to restore it.
@@ -559,7 +559,7 @@ bool Reposition() {
             ScreenToClient(g_taskbar, &tl);
             const int rebarHeight = rr.bottom - rr.top;
             if (tl.y < top && tl.y + rebarHeight > top)
-                MoveWindow(g_rebar, tl.x, tl.y, rr.right - rr.left, std::max(0, top - tl.y), TRUE);
+                MoveWindow(g_rebar, tl.x, tl.y, rr.right - rr.left, (int)std::max<LONG>(0, top - tl.y), TRUE);
         }
 
         bool covered = GetWindow(g_wnd, GW_HWNDPREV) != nullptr;
